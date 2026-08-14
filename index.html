@@ -369,7 +369,7 @@ img,svg{max-width:100%}
 }
 .out-head{padding:38px 42px 0}
 .out-kick{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:22px;align-items:center}
-.out-title{font-size:25px;font-weight:600;letter-spacing:-.002em;line-height:1.22;margin-bottom:22px;max-width:26ch}
+.out-title{font-size:25px;font-weight:600;letter-spacing:-.002em;line-height:1.22;margin-bottom:30px;max-width:26ch}
 .out-key{
   font-family:var(--serif);font-size:clamp(20px,2vw,27px);line-height:1.42;color:var(--ink);
   letter-spacing:-.003em;max-width:34ch;margin:0 0 34px;
@@ -3531,7 +3531,6 @@ function vystup(v,pid){
     <div class="out-head">
       <div class="out-kick"><span class="tag t-obl">${esc(v.typ)}</span><span class="tag t-stav">${esc(v.stav)}</span></div>
       <h3 class="out-title">${esc(v.nazev)}</h3>
-      <p class="out-key">${v.sdeleni}</p>
       ${v.poznamka?`<p style="font-size:14.5px;line-height:1.6;color:var(--ink-2);background:var(--surface-2);border-left:3px solid var(--signal);padding:16px 20px;margin:0 0 30px;max-width:78ch">${v.poznamka}</p>`:''}
     </div>
     ${(v.viz||[]).map(c=>c.k==='mapa'?mapaBlok(c):chart(c)).join('')}
