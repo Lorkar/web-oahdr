@@ -965,7 +965,35 @@ const KRAJ_ID = {'Praha':'CZ-PR','Středočeský':'CZ-ST','Jihočeský':'CZ-JC',
   'Zlínský':'CZ-ZL','Moravskoslezský':'CZ-MO'};
 const ID_KRAJ = Object.fromEntries(Object.entries(KRAJ_ID).map(([a,b])=>[b,a]));
 const AKR = {'Akreditace MSp / PMS':'ano','Jiný režim (registrace, certifikát, pověření)':'jiny','Bez akreditace':'ne'};
-const MS = { lyr:null, kraj:null, akr:'vse', org:null };
+const MS = { lyr:null, ov:null, off:{}, kraj:null, akr:'vse', org:null };
+
+/* Překryvy vrstev: skupiny se berou z MAPA.L[].group (data.js se nemění).
+   obeti     = NNO oběti sub. soc. služby + NNO oběti akreditované MSp + PMS oběti
+   pachatele = NNO probační programy – dospělí + PMS pachatelé
+   mladistvi = NNO probační programy – mladiství + PMS pachatelé – mladiství */
+const OVL = [
+  {id:'obeti',     label:'Oběti'},
+  {id:'pachatele', label:'Pachatelé'},
+  {id:'mladistvi', label:'Mladiství pachatelé'}
+];
+const OV_COLOR = '#44566C';              /* neutrální barva výplně krajů v režimu překryvu */
+const ROWLYR = new Map();                /* záznam -> vrstva, ze které pochází */
+function mIndex(){
+  if(ROWLYR.size) return;
+  MAPA.L.forEach(l=>(MAPA.R[l.id]||[]).forEach(r=>ROWLYR.set(r,l)));
+}
+const mMobile = () => window.matchMedia('(max-width:860px)').matches;
+function mOv(){ return MS.ov ? OVL.find(o=>o.id===MS.ov) : null; }
+function mOvLayers(o){ return MAPA.L.filter(l=>l.group===o.id); }
+function mActive(){
+  /* Aktuálně zobrazené vrstvy: jedna (běžný režim) nebo zapnuté vrstvy překryvu. */
+  const o=mOv();
+  if(!o) return [MAPA.L.find(x=>x.id===MS.lyr)];
+  const on=mOvLayers(o).filter(l=>!MS.off[l.id]);
+  return on.length ? on : mOvLayers(o);
+}
+const dotsHtml = ls => `<span class="dots">${ls.map(l=>`<i style="background:${l.color}"></i>`).join('')}</span>`;
+const brkHtml  = (by,act) => act.map(l=>`<span class="brkn"><i style="background:${l.color}"></i>${(by&&by[l.id])||0}</span>`).join('');
 
 function mapaBlok(c, nadpis){
   /* Generuje rozvržení mapy: nadpis + SVG mapa na celou šířku nahoře,
@@ -977,6 +1005,7 @@ function mapaBlok(c, nadpis){
         <svg class="czmap" id="czmap" viewBox="30 -10 1000 600" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mapa krajů České republiky"></svg>
         <div class="mp-lgd">
           <span>Méně</span><span class="ramp" id="mRamp"></span><span>Více organizací</span>
+          <span class="key" id="mKey"></span>
           <span class="tot" id="mTot"></span>
         </div>
       </section>
@@ -985,6 +1014,7 @@ function mapaBlok(c, nadpis){
           <div class="mp-panel-head">Vrstvy a filtry</div>
           <div class="mp-panel-body" id="paneFiltr">
             <div class="mp-sec"><h4>Datová vrstva</h4><div id="mLayers"></div></div>
+            <div class="mp-sec"><h4>Překryv vrstev</h4><div id="mOv"></div><div id="mOvLayers"></div></div>
             <div class="mp-sec"><h4>Akreditace</h4><div id="mAkr">
               ${[['vse','Vše'],['ano','Akreditace MSp / PMS'],['jiny','Jiný režim'],['ne','Bez akreditace / neuvedeno']]
                 .map(([k,l])=>`<button type="button" class="lyr" data-akr="${k}">${l}</button>`).join('')}
@@ -994,6 +1024,7 @@ function mapaBlok(c, nadpis){
               <p style="font-size:13.5px;line-height:1.6;color:var(--ink-2)">
                 Kliknutím na kraj v mapě se zobrazí seznam organizací v prostředním panelu.
                 Opětovným kliknutím na vybraný kraj nebo tlačítkem <b>Zpět na přehled</b> se vrátíte na souhrn.
+                Volbou <b>Překryv vrstev</b> zobrazíte několik vrstev najednou; počty v mapě jsou rozdělené podle vrstev (barevné body).
               </p>
             </div>
           </div>
@@ -1014,16 +1045,25 @@ function mapaBlok(c, nadpis){
 }
 
 function mRows(){
-  const rows = MAPA.R[MS.lyr]||[];
-  const S=MAPA.S;
-  return rows.filter(r=>{
-    if(MS.akr==='vse') return true;
-    return (AKR[S[r[5]]]||'ne')===MS.akr;
-  });
+  /* Záznamy všech aktuálně zobrazených vrstev (po filtru akreditace). */
+  const S=MAPA.S; let rows=[];
+  mActive().forEach(l=>{ rows=rows.concat(MAPA.R[l.id]||[]); });
+  if(MS.akr==='vse') return rows;
+  return rows.filter(r=>(AKR[S[r[5]]]||'ne')===MS.akr);
 }
 function mCounts(){
   const S=MAPA.S, m={};
   mRows().forEach(r=>{ const k=S[r[7]]; if(k) m[k]=(m[k]||0)+1; });
+  return m;
+}
+function mCountsBy(){
+  /* Počty podle kraje a vrstvy: { kraj: { id_vrstvy: počet } } */
+  const S=MAPA.S, m={};
+  mRows().forEach(r=>{
+    const k=S[r[7]], l=ROWLYR.get(r); if(!k||!l) return;
+    if(!m[k]) m[k]={};
+    m[k][l.id]=(m[k][l.id]||0)+1;
+  });
   return m;
 }
 function setTab(t){ /* Panely jsou nyní vždy viditelné — přepínání tabů odstraněno */ }
@@ -1040,38 +1080,75 @@ function fitBleed(){
   });
 }
 let _bleedBound=false;
+function mOvChips(){
+  /* Přepínače jednotlivých vrstev uvnitř zvoleného překryvu. */
+  const box=$('#mOvLayers'); if(!box) return;
+  const o=mOv();
+  if(!o){ box.innerHTML=''; return; }
+  const ls=mOvLayers(o);
+  box.innerHTML=`<p class="ov-note">Vrstvy v překryvu – kliknutím zapnete či vypnete:</p>`+
+    ls.map(l=>`<button type="button" class="lyr sub" data-ol="${l.id}" aria-pressed="${!MS.off[l.id]}" style="--c:${l.color}"><i style="background:${l.color}"></i>${esc(l.short)}<span class="n">${(MAPA.R[l.id]||[]).length}</span></button>`).join('');
+  box.querySelectorAll('[data-ol]').forEach(b=>b.onclick=()=>{
+    const id=b.dataset.ol;
+    if(!MS.off[id] && ls.filter(l=>!MS.off[l.id]).length<=1) return;   /* aspoň jedna vrstva musí zůstat zapnutá */
+    MS.off[id]=!MS.off[id]; MS.org=null; mOvChips(); drawMapa();
+  });
+}
 function initMapa(){
-  /* Inicializace mapové aplikace: vrstvy, filtry, kraj-click, resize listener. */
+  /* Inicializace mapové aplikace: vrstvy, překryvy, filtry, kraj-click, resize listener. */
   if(typeof MAPA==='undefined' || !document.getElementById('mapa')) return;
+  mIndex();
   MS.lyr = MS.lyr || MAPA.L[0].id;
   const box = $('#mLayers');
   box.innerHTML = MAPA.L.map(l=>`<button class="lyr" data-l="${l.id}"><i style="background:${l.color}"></i>${esc(l.short)}<span class="n">${(MAPA.R[l.id]||[]).length}</span></button>`).join('');
+  $('#mOv').innerHTML = OVL.map(o=>{
+    const ls=mOvLayers(o), n=ls.reduce((a,l)=>a+(MAPA.R[l.id]||[]).length,0);
+    return `<button type="button" class="lyr" data-ov="${o.id}">${dotsHtml(ls)}${esc(o.label)}<span class="n">${n}</span></button>`;
+  }).join('');
   const sync=()=>{
-    $$('#mLayers .lyr').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.l===MS.lyr)));
+    $$('#mLayers .lyr').forEach(b=>b.setAttribute('aria-pressed',String(!MS.ov && b.dataset.l===MS.lyr)));
+    $$('#mOv .lyr').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.ov===MS.ov)));
     $$('#mAkr .lyr').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.akr===MS.akr)));
+    mOvChips();
   };
-  $$('#mLayers .lyr').forEach(b=>b.onclick=()=>{MS.lyr=b.dataset.l;MS.org=null;sync();drawMapa();});
+  $$('#mLayers .lyr').forEach(b=>b.onclick=()=>{MS.ov=null;MS.lyr=b.dataset.l;MS.org=null;sync();drawMapa();});
+  $$('#mOv .lyr').forEach(b=>b.onclick=()=>{MS.ov=(MS.ov===b.dataset.ov)?null:b.dataset.ov;MS.org=null;sync();drawMapa();});
   $$('#mAkr .lyr').forEach(b=>b.onclick=()=>{MS.akr=b.dataset.akr;MS.org=null;sync();drawMapa();});
   /* Tlačítko pro zavření detailu odstraněno — detail je vždy viditelný v pravém panelu */
   sync(); drawMapa();
   fitBleed();
   if(!_bleedBound){
-    let t; window.addEventListener('resize',()=>{ clearTimeout(t); t=setTimeout(fitBleed,120); });
+    let t, wasMob=mMobile();
+    window.addEventListener('resize',()=>{ clearTimeout(t); t=setTimeout(()=>{
+      fitBleed();
+      if(wasMob!==mMobile()){ wasMob=mMobile(); if(MS.ov) drawMapa(); }   /* přechod mobil/desktop: překreslit popisky */
+    },120); });
     _bleedBound=true;
   }
 }
 function drawMapa(){
   const svg=$('#czmap'); if(!svg) return;
-  const L=MAPA.L.find(x=>x.id===MS.lyr), cnt=mCounts();
+  const ov=mOv(), act=mActive(), L=act[0], color=ov?OV_COLOR:L.color;
+  const cnt=mCounts(), by=ov?mCountsBy():null;
   const max=Math.max(1,...Object.values(cnt));
   const shade=n=>{ if(!n) return '#E9EDF1';
-    const o=.2+.8*Math.min(1,n/max); return hexA(L.color,o); };
+    const q=Math.min(1,n/max);
+    return hexA(color, ov ? .14+.46*q : .2+.8*q); };
+  const tip=k=>ov ? '\n'+act.map(l=>`${l.short}: ${(by[k]&&by[k][l.id])||0}`).join('\n') : '';
   svg.innerHTML = Object.entries(MAPA.P).map(([id,d])=>{
     const k=ID_KRAJ[id], n=cnt[k]||0;
-    return `<path d="${d}" data-k="${esc(k)}" fill="${shade(n)}" class="${MS.kraj===k?'sel':''}"><title>${esc(k)}: ${n}</title></path>`;
+    return `<path d="${d}" data-k="${esc(k)}" fill="${shade(n)}" class="${MS.kraj===k?'sel':''}"><title>${esc(k)}: ${n}${esc(tip(k))}</title></path>`;
   }).join('') + Object.entries(MAPA.C).map(([id,[x,y]])=>{
     const k=ID_KRAJ[id], n=cnt[k]||0;
-    return `<text class="cnt" x="${x}" y="${y+4}" fill="${n/max>.55?'#fff':'var(--ink)'}">${n||''}</text>`;
+    if(!ov) return `<text class="cnt" x="${x}" y="${y+4}" fill="${n/max>.55?'#fff':'var(--ink)'}">${n||''}</text>`;
+    if(!n) return '';
+    /* Překryv: pod sebou jeden řádek na vrstvu – barevný bod + počet */
+    /* na úzkých displejích se mapa zmenšuje, popisky proto zvětšíme */
+    const sc=mMobile()?1.7:1, gap=15*sc, y0=y+4*sc-(act.length-1)*gap/2, fs=sc>1?` style="font-size:${(12.5*sc).toFixed(1)}px"`:'';
+    return act.map((l,i)=>{
+      const v=(by[k]&&by[k][l.id])||0, s=String(v), w=(13+s.length*8.5)*sc, x0=x-w/2, yy=y0+i*gap;
+      return `<circle class="bd" cx="${x0+4.5*sc}" cy="${yy-4.5*sc}" r="${4.5*sc}" fill="${l.color}"/><text class="brk" x="${x0+13*sc}" y="${yy}"${fs}${v?'':' opacity=".45"'}>${s}</text>`;
+    }).join('');
   }).join('');
   svg.querySelectorAll('path').forEach(p=>p.onclick=()=>{
     const k=p.dataset.k;
@@ -1080,9 +1157,11 @@ function drawMapa(){
     if(MS.kraj) setTab('seznam');
   });
   const ramp=$('#mRamp');
-  if(ramp) ramp.innerHTML=[0.2,0.4,0.6,0.8,1].map(o=>`<i style="background:${hexA(L.color,o)}"></i>`).join('');
+  if(ramp) ramp.innerHTML=[0.2,0.4,0.6,0.8,1].map(o=>`<i style="background:${hexA(color,ov?.14+.46*o:o)}"></i>`).join('');
+  const key=$('#mKey');
+  if(key) key.innerHTML = ov ? act.map(l=>`<span><i style="background:${l.color}"></i>${esc(l.short)}</span>`).join('') : '';
   const tot=$('#mTot');
-  if(tot) tot.innerHTML = `${esc(L.short)} · <b>${mRows().length}</b> záznamů`;
+  if(tot) tot.innerHTML = `${esc(ov?ov.label+' (překryv)':L.short)} · <b>${mRows().length}</b> záznamů`;
   mList();
 }
 function hexA(hex,a){
@@ -1093,26 +1172,32 @@ function hexA(hex,a){
 function mList(){
   /* Vykreslí seznam organizací ve středním panelu (Seznam). */
   const el=$('#mList'); if(!el) return;
-  const S=MAPA.S, L=MAPA.L.find(x=>x.id===MS.lyr);
+  const S=MAPA.S, ov=mOv(), act=mActive(), L=act[0];
   if(!MS.kraj){
-    const cnt=mCounts();
+    const cnt=mCounts(), by=ov?mCountsBy():null;
     const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1]);
-    el.innerHTML=`<h4>${esc(L.label)}</h4>
-      <p style="font-size:14px;color:var(--ink-2);line-height:1.55;margin-bottom:20px">Celkem ${mRows().length} záznamů. Vyberte kraj v mapě a zobrazí se jeho organizace.</p>
-      ${top.map(([k,n])=>`<div style="border-bottom:1px solid var(--line-2);padding:9px 0"><b style="font-size:13.5px;display:flex;font-weight:500"><span>${esc(k)}</span><span class="mono" style="margin-left:auto;color:var(--ink-3)">${n}</span></b></div>`).join('')}`;
+    el.innerHTML=`<h4>${esc(ov?ov.label+' – překryv vrstev':L.label)}</h4>
+      <p style="font-size:14px;color:var(--ink-2);line-height:1.55;margin-bottom:20px">Celkem ${mRows().length} záznamů${ov?` ve vrstvách: ${act.map(l=>esc(l.short)).join(', ')}`:''}. Vyberte kraj v mapě a zobrazí se jeho organizace.</p>
+      ${top.map(([k,n])=>`<div style="border-bottom:1px solid var(--line-2);padding:9px 0"><b style="font-size:13.5px;display:flex;align-items:center;font-weight:500"><span>${esc(k)}</span>${ov?`<span class="brkd">${brkHtml(by[k],act)}</span>`:''}<span class="mono" style="margin-left:${ov?'14px':'auto'};color:var(--ink-3)">${n}</span></b></div>`).join('')}`;
     mDetail();
     return;
   }
   const rows=mRows().filter(r=>S[r[7]]===MS.kraj);
+  let prev=null;
   el.innerHTML=`<h4>${esc(MS.kraj)} · ${rows.length} záznamů</h4>
     ${rows.length?rows.slice(0,150).map((r,i)=>{
-      const a=AKR[S[r[5]]]||'ne';
-      return `<div class="org${MS.org===i?' sel':''}" data-i="${i}" role="button" tabindex="0">
+      const RL=ROWLYR.get(r)||L, a=AKR[S[r[5]]]||'ne';
+      let head='';
+      if(ov && RL!==prev){
+        prev=RL;
+        head=`<div class="ov-h"><i style="background:${RL.color}"></i>${esc(RL.label)}<span class="n">${rows.filter(x=>ROWLYR.get(x)===RL).length}</span></div>`;
+      }
+      return head+`<div class="org${MS.org===i?' sel':''}" data-i="${i}" role="button" tabindex="0">
         <b>${esc(S[r[0]])}</b>
         ${S[r[1]]?`<p>${esc(S[r[1]])}</p>`:''}
         ${S[r[3]]?`<p style="color:var(--ink-3)">${esc(S[r[3]])}</p>`:''}
         ${S[r[2]]?`<span class="meta">${esc(S[r[2]])}</span>`:''}
-        ${L.akr?`<span class="akr ${a}">${esc(S[r[5]]||'Neuvedeno')}</span>`:''}
+        ${RL.akr?`<span class="akr ${a}">${esc(S[r[5]]||'Neuvedeno')}</span>`:''}
       </div>`;}).join('')+(rows.length>150?`<p style="font-size:12.5px;color:var(--ink-3);margin-top:14px">Zobrazeno prvních 150 z ${rows.length} záznamů.</p>`:'')
       :`<p style="font-size:14px;color:var(--ink-3)">V tomto kraji nejsou pro zvolenou vrstvu a filtr žádné záznamy.</p>`}`;
   {
@@ -1133,13 +1218,14 @@ function mDetail(){
   /* Vykreslí detail vybrané organizace v pravém panelu. */
   const el=$('#mDetail');
   if(!el) return;
-  const S=MAPA.S, L=MAPA.L.find(x=>x.id===MS.lyr);
+  const S=MAPA.S;
   const rows=MS.kraj?mRows().filter(r=>S[r[7]]===MS.kraj):[];
   const r=(MS.org!==null&&rows[MS.org])?rows[MS.org]:null;
   if(!r){
     el.innerHTML=`<p class="prazdno">Vyberte kraj v mapě a poté konkrétní organizaci v seznamu. Zobrazí se tu její podrobnosti.</p>`;
     return;
   }
+  const L=ROWLYR.get(r)||mActive()[0];
   const pole=[
     ['Program nebo služba',S[r[1]]],
     ['Cílová skupina',S[r[3]]],
